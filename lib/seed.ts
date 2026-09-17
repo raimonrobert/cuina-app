@@ -1,5 +1,5 @@
 // Datos semilla (BASE) para la función "Restaurar datos".
-// Réplica de los datos cargados inicialmente en Supabase.
+// Réplica de los datos cargados inicialmente en la base de datos.
 
 import type { Item, Location } from "./types";
 

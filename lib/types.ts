@@ -34,7 +34,7 @@ export interface SelEl {
   desc?: string;
 }
 
-// Fila tal cual viene de Supabase (snake_case en items).
+// Fila tal cual viene de la base de datos (snake_case en items).
 export interface ItemRow {
   id: number;
   name: string;

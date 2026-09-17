@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { supabase } from "@/lib/supabaseClient";
 import { ELS, SUB_LOCS, PARENT_EL } from "@/lib/planData";
 import type { Item, ItemRow, Location, SelEl, ViewKey, Freq } from "@/lib/types";
 
@@ -115,18 +114,13 @@ export const useStore = create<Store>((set, get) => ({
 
   load: async () => {
     try {
-      const [locRes, catRes, itemRes] = await Promise.all([
-        supabase.from("locations").select("id,name,desc,w,d,h").order("name"),
-        supabase.from("categories").select("name").order("id"),
-        supabase.from("items").select("id,name,cat,loc_id,freq,notes").order("id"),
-      ]);
-      if (locRes.error) throw locRes.error;
-      if (catRes.error) throw catRes.error;
-      if (itemRes.error) throw itemRes.error;
+      const res = await fetch("/api/data");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || "Error al cargar datos");
       set({
-        locations: (locRes.data as Location[]) || [],
-        categories: ((catRes.data as { name: string }[]) || []).map((c) => c.name),
-        items: ((itemRes.data as ItemRow[]) || []).map(rowToItem),
+        locations: (body.locations as Location[]) || [],
+        categories: (body.categories as string[]) || [],
+        items: ((body.items as ItemRow[]) || []).map(rowToItem),
         loaded: true,
         loadError: null,
       });
@@ -218,8 +212,12 @@ export const useStore = create<Store>((set, get) => ({
     if (w) patch.w = w;
     if (d) patch.d = d;
     if (h) patch.h = h;
-    const { error } = await supabase.from("locations").update(patch).eq("id", sel.locId);
-    if (error) {
+    const res = await fetch(`/api/locations/${sel.locId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
       get().showToast("Error al guardar", "r");
       return;
     }
@@ -252,66 +250,72 @@ export const useStore = create<Store>((set, get) => ({
     const payload = {
       name: data.name.trim(),
       cat: data.cat,
-      loc_id: data.locId || null,
+      locId: data.locId || null,
       freq: data.freq || "",
       notes: data.notes.trim(),
     };
     if (id != null) {
-      const { error } = await supabase.from("items").update(payload).eq("id", id);
-      if (error) return get().showToast("Error al guardar", "r");
+      const res = await fetch(`/api/items/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) return get().showToast("Error al guardar", "r");
       set({
         items: get().items.map((it) =>
-          it.id === id ? { ...it, name: payload.name, cat: payload.cat, locId: payload.loc_id, freq: payload.freq as Freq, notes: payload.notes } : it
+          it.id === id ? { ...it, name: payload.name, cat: payload.cat, locId: payload.locId, freq: payload.freq as Freq, notes: payload.notes } : it
         ),
       });
       get().showToast("Actualizado ✓", "g");
     } else {
-      const { data: row, error } = await supabase
-        .from("items")
-        .insert(payload)
-        .select("id,name,cat,loc_id,freq,notes")
-        .single();
-      if (error || !row) return get().showToast("Error al añadir", "r");
-      set({ items: [...get().items, rowToItem(row as ItemRow)] });
+      const res = await fetch("/api/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.item) return get().showToast("Error al añadir", "r");
+      set({ items: [...get().items, rowToItem(body.item as ItemRow)] });
       get().showToast("Añadido ✓", "g");
     }
   },
 
   deleteItem: async (id) => {
-    const { error } = await supabase.from("items").delete().eq("id", id);
-    if (error) return get().showToast("Error al eliminar", "r");
+    const res = await fetch(`/api/items/${id}`, { method: "DELETE" });
+    if (!res.ok) return get().showToast("Error al eliminar", "r");
     set({ items: get().items.filter((it) => it.id !== id) });
     get().showToast("Eliminado", "r");
   },
 
   saveLocation: async (data, id) => {
     if (id) {
-      const { error } = await supabase
-        .from("locations")
-        .update({ name: data.name.trim(), desc: data.desc.trim(), w: data.w, d: data.d, h: data.h })
-        .eq("id", id);
-      if (error) return get().showToast("Error al guardar", "r");
+      const res = await fetch(`/api/locations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: data.name.trim(), desc: data.desc.trim(), w: data.w, d: data.d, h: data.h }),
+      });
+      if (!res.ok) return get().showToast("Error al guardar", "r");
       set({
         locations: get().locations.map((l) =>
           l.id === id ? { ...l, name: data.name.trim(), desc: data.desc.trim(), w: data.w, d: data.d, h: data.h } : l
         ),
       });
     } else {
-      const newId = "loc_" + Date.now();
-      const { data: row, error } = await supabase
-        .from("locations")
-        .insert({ id: newId, name: data.name.trim(), desc: data.desc.trim(), w: data.w, d: data.d, h: data.h })
-        .select("id,name,desc,w,d,h")
-        .single();
-      if (error || !row) return get().showToast("Error al crear", "r");
-      set({ locations: [...get().locations, row as Location].sort((a, b) => a.name.localeCompare(b.name)) });
+      const res = await fetch("/api/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: data.name.trim(), desc: data.desc.trim(), w: data.w, d: data.d, h: data.h }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.location) return get().showToast("Error al crear", "r");
+      set({ locations: [...get().locations, body.location as Location].sort((a, b) => a.name.localeCompare(b.name)) });
     }
     get().showToast("Guardado ✓", "g");
   },
 
   deleteLocation: async (id) => {
-    const { error } = await supabase.from("locations").delete().eq("id", id);
-    if (error) return get().showToast("Error al eliminar", "r");
+    const res = await fetch(`/api/locations/${id}`, { method: "DELETE" });
+    if (!res.ok) return get().showToast("Error al eliminar", "r");
     set({
       locations: get().locations.filter((l) => l.id !== id),
       items: get().items.map((it) => (it.locId === id ? { ...it, locId: null } : it)),
@@ -321,37 +325,12 @@ export const useStore = create<Store>((set, get) => ({
 
   replaceAll: async (data) => {
     try {
-      // Borrar en orden seguro respecto a la FK items.loc_id -> locations.id
-      let res = await supabase.from("items").delete().neq("id", -1);
-      if (res.error) throw res.error;
-      res = await supabase.from("locations").delete().neq("id", "__none__");
-      if (res.error) throw res.error;
-      res = await supabase.from("categories").delete().neq("id", -1);
-      if (res.error) throw res.error;
-
-      if (data.locations.length) {
-        res = await supabase.from("locations").insert(
-          data.locations.map((l) => ({ id: l.id, name: l.name, desc: l.desc, w: l.w, d: l.d, h: l.h }))
-        );
-        if (res.error) throw res.error;
-      }
-      if (data.categories.length) {
-        res = await supabase.from("categories").insert(data.categories.map((name) => ({ name })));
-        if (res.error) throw res.error;
-      }
-      if (data.items.length) {
-        res = await supabase.from("items").insert(
-          data.items.map((it) => ({
-            id: it.id,
-            name: it.name,
-            cat: it.cat,
-            loc_id: it.locId || null,
-            freq: it.freq || "",
-            notes: it.notes || "",
-          }))
-        );
-        if (res.error) throw res.error;
-      }
+      const res = await fetch("/api/replace-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("replace-all failed");
       await get().load();
       return true;
     } catch {
